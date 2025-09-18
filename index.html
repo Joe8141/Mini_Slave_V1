@@ -32,12 +32,8 @@ hr{border:0;border-top:1px solid #22314d;margin:10px 0}
     <div class="row" style="justify-content:space-between;align-items:center">
       <div>
         <strong>Conexão</strong>
-        <div class="small">BLE recomendado (HTTPS). HTTP como fallback.</div>
+        <div class="small">HTTP via IP automático. Se falhar, insira manualmente.</div>
         <div id="connStatus" class="status">Aguardando…</div>
-      </div>
-      <div class="row">
-        <button id="btnBle">Conectar via BLE</button>
-        <button id="btnDisconnect" disabled>Desconectar</button>
       </div>
     </div>
 
@@ -46,7 +42,7 @@ hr{border:0;border-top:1px solid #22314d;margin:10px 0}
     <div class="row">
       <input id="ipField" placeholder="IP do ESP (ex.: 192.168.4.1)" style="flex:1;min-width:240px">
       <button id="btnHttp">Conectar HTTP</button>
-      <span class="badge" id="httpInfo">HTTPS bloqueia chamadas HTTP — use BLE no Pages</span>
+      <span class="badge" id="httpInfo">HTTPS bloqueia chamadas HTTP — abra em http://</span>
     </div>
 
     <div class="row">
@@ -80,28 +76,23 @@ hr{border:0;border-top:1px solid #22314d;margin:10px 0}
     </div>
   </div>
 
-  <div class="footer small">Nada é salvo localmente. Use BLE no GitHub Pages; HTTP funciona quando a página é aberta em HTTP.</div>
+  <div class="footer small">Nada é salvo localmente. Abra a página via HTTP local para acessar os dados.</div>
 </main>
 
 <script>
 /* ===================== CONFIG ===================== */
-const SERVICE_UUID   = '12345678-1234-1234-1234-1234567890ab';
-const DATA_CHAR_UUID = 'fedcba98-7654-4321-aaaa-bbbbbbbbbbbb';
-const CLOUD_BASE     = 'https://SEU_FIREBASE.firebaseio.com/devices';
-
+const CLOUD_BASE = 'https://SEU_FIREBASE.firebaseio.com/devices';
 const el = id => document.getElementById(id);
 const connStatus = el('connStatus');
 const ipField = el('ipField');
 const idField = el('idField');
 const btnHttp = el('btnHttp');
 const btnFromCloud = el('btnFromCloud');
-const btnBle = el('btnBle');
-const btnDisconnect = el('btnDisconnect');
 const lastEl = el('last');
 const btnSaveCloud = el('btnSaveCloud');
 const httpInfo = el('httpInfo');
 
-let httpTimer=null, bleDevice=null, bleChar=null;
+let httpTimer=null;
 
 /* ===================== HELPERS ===================== */
 function setStatus(s){ connStatus.textContent=s; }
@@ -126,12 +117,13 @@ async function connectHTTPOnce(ip){
     const j=await r.json(); updateValues(j);
     setStatus('Conectado via HTTP: '+ip);
   }catch(err){
-    console.warn(err); setStatus('Falha HTTP.'); 
+    console.warn(err); setStatus('Tentando reconectar em '+ip+'...');
   }
 }
 btnHttp.addEventListener('click',()=>{
   const ip=ipField.value.trim(); if(!ip) return;
   if(httpTimer) clearInterval(httpTimer);
+  setStatus('Conectando em '+ip+'...');
   connectHTTPOnce(ip);
   httpTimer=setInterval(()=>connectHTTPOnce(ip),1000);
 });
@@ -146,12 +138,28 @@ btnFromCloud.addEventListener('click',async()=>{
     location.href=`http://${ip}`; }catch(err){alert(err);}
 });
 
-/* ===================== AUTO ?ip / ?id ===================== */
+/* ===================== AUTOQUERY ===================== */
 (function(){
   const q=new URLSearchParams(location.search);
-  if(q.get('ip')){ ipField.value=q.get('ip'); btnHttp.click(); }
-  if(q.get('id')){ idField.value=q.get('id'); btnFromCloud.click(); }
+  if(q.get('ip')){
+    ipField.value=q.get('ip');
+    btnHttp.click(); // inicia polling automático
+  }
+  if(q.get('id')){
+    idField.value=q.get('id');
+    btnFromCloud.click(); // busca e redireciona
+  }
 })();
+
+/* ===================== SAVE CLOUD (apenas clique) ===================== */
+btnSaveCloud.addEventListener('click',()=>{
+  const params=new URLSearchParams();
+  params.set('device','MiniSlave');
+  params.set('v',el('v').textContent);
+  params.set('i',el('i').textContent);
+  params.set('fp',el('fp').textContent);
+  window.open('https://empresa.exemplo.com/save?'+params.toString(),'_blank');
+});
 </script>
 </body>
 </html>
