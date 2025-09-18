@@ -3,44 +3,57 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BlackBox Mini - Dashboard (BLE)</title>
+<title>BlackBox Mini - Dashboard</title>
 <style>
 :root{--bg:#0f172a;--card:#1e293b;--txt:#e5e7eb;--muted:#94a3b8;--accent:#38bdf8}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--txt)}
 header{background:var(--card);padding:12px;text-align:center;font-size:20px;font-weight:700;color:var(--accent)}
-main{padding:16px;max-width:960px;margin:0 auto}
+main{padding:16px;max-width:1000px;margin:0 auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .card{background:var(--card);padding:12px;border-radius:10px;display:flex;flex-direction:column;gap:8px}
 .label{color:var(--muted);font-size:13px}.valor{color:var(--accent);font-weight:700;font-size:18px}
-.controls{display:flex;gap:8px;margin:10px 0}
+.controls{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
 button,input{padding:10px;border-radius:8px;border:none;font-size:14px}
 button{background:var(--accent);color:#002233;cursor:pointer}
 .small{color:var(--muted);font-size:13px}
 .footer{margin-top:14px;color:var(--muted);text-align:center}
+.badge{display:inline-block;background:#0b1220;border:1px solid #22314d;color:var(--muted);padding:4px 8px;border-radius:999px;font-size:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.status{font-size:13px;color:var(--muted)}
+hr{border:0;border-top:1px solid #22314d;margin:10px 0}
 </style>
 </head>
 <body>
 <header>📊 BlackBox Mini — Dashboard</header>
 <main>
+
+  <!-- CONEXÃO -->
   <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center">
+    <div class="row" style="justify-content:space-between;align-items:center">
       <div>
         <strong>Conexão</strong>
-        <div class="small">Use BLE (recomendado) ou fallback HTTP</div>
+        <div class="small">BLE recomendado (HTTPS). HTTP como fallback.</div>
+        <div id="connStatus" class="status">Aguardando…</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div class="row">
         <button id="btnBle">Conectar via BLE</button>
         <button id="btnDisconnect" disabled>Desconectar</button>
       </div>
     </div>
 
-    <div style="margin-top:10px;">
-      <div style="display:flex;gap:8px">
-        <input id="ipField" placeholder="Fallback HTTP IP (apenas se página em HTTP)" style="flex:1">
-        <button id="btnHttp">Conectar HTTP</button>
-      </div>
-      <div class="small" style="margin-top:6px">Nota: se a página estiver em <strong>HTTPS</strong> (GitHub Pages), chamadas HTTP locais são bloqueadas pelo navegador. Use BLE.</div>
+    <hr>
+
+    <div class="row">
+      <input id="ipField" placeholder="Fallback HTTP IP (ex.: 192.168.4.1)" style="flex:1;min-width:240px">
+      <button id="btnHttp">Conectar HTTP</button>
+      <span class="badge" id="httpInfo">HTTPS bloqueia chamadas HTTP — use BLE no Pages</span>
     </div>
+
+    <div class="row">
+      <input id="idField" placeholder="ID do dispositivo (para buscar IP na nuvem)" style="flex:1;min-width:240px">
+      <button id="btnFromCloud">Ir via nuvem (pegar IP e redirecionar)</button>
+    </div>
+    <div class="small" id="cloudNote">Defina sua URL de nuvem no código (CLOUD_BASE).</div>
   </div>
 
   <h2 style="color:var(--accent);margin-top:12px">Medições (tempo real)</h2>
@@ -62,67 +75,66 @@ button{background:var(--accent);color:#002233;cursor:pointer}
       <div class="small">Última atualização:</div>
       <div id="last" class="small">--</div>
     </div>
-    <div style="display:flex;gap:8px">
-      <!-- botão que abre servidor da empresa (só quando o usuário clicar) -->
+    <div class="row">
       <button id="btnSaveCloud">Salvar no servidor (empresa)</button>
     </div>
   </div>
 
-  <div class="footer small">Conexão via BLE é recomendada para funcionamento sem configuração. Nada é salvo localmente.</div>
+  <div class="footer small">Nada é salvo localmente. Use BLE no GitHub Pages; HTTP funciona quando a página é aberta em HTTP.</div>
 </main>
 
 <script>
-/*
-  Estratégia:
-  - Tenta conectar por BLE (recomendado). Espera notifications com JSON.
-  - Se BLE não for possível, o usuário pode usar fallback HTTP (IP manual).
-  - A interface NÃO grava nada automaticamente. Somente quando usuário clicar "Salvar no servidor"
-    abrimos uma nova aba com o endereço do servidor da empresa (GET com parâmetros mínimos).
-*/
+/* ===================== CONFIG ===================== */
+/* UUIDs alinhados com o firmware atualizado */
+const SERVICE_UUID    = '12345678-1234-1234-1234-1234567890ab';
+const DATA_CHAR_UUID  = 'fedcba98-7654-4321-aaaa-bbbbbbbbbbbb'; // <- mesma do firmware
 
-/* UUIDs — ajuste se mudar no firmware */
-const SERVICE_UUID = '12345678-1234-1234-1234-1234567890ab'; // serviço exemplo
-const DATA_CHAR_UUID = 'fedcba98-1234-5678-1234-abcdefabcdef'; // característica notificação (telemetria)
+/* Backend para buscar IP por ID (ex.: Firebase REST) */
+const CLOUD_BASE = 'https://SEU_FIREBASE.firebaseio.com/devices'; // troque pelo seu endpoint
 
-// elementos UI
-const btnBle = document.getElementById('btnBle');
-const btnDisconnect = document.getElementById('btnDisconnect');
-const btnHttp = document.getElementById('btnHttp');
-const ipField = document.getElementById('ipField');
-const btnSaveCloud = document.getElementById('btnSaveCloud');
-const lastEl = document.getElementById('last');
+/* ===================== UI/STATE ===================== */
+const el = (id)=>document.getElementById(id);
+const btnBle = el('btnBle');
+const btnDisconnect = el('btnDisconnect');
+const btnHttp = el('btnHttp');
+const btnFromCloud = el('btnFromCloud');
+const ipField = el('ipField');
+const idField = el('idField');
+const lastEl = el('last');
+const connStatus = el('connStatus');
+const httpInfo = el('httpInfo');
+const btnSaveCloud = el('btnSaveCloud');
 
 let bleDevice = null;
 let bleChar = null;
 let httpTimer = null;
 
-// atualiza UI com objeto JSON
-function updateValues(j) {
+/* ===================== HELPERS ===================== */
+function setStatus(s){ connStatus.textContent = s; }
+function updateValues(j){
   if (!j) return;
-  if (typeof j.v === 'number') document.getElementById('v').textContent = j.v.toFixed(2);
-  if (typeof j.i === 'number') document.getElementById('i').textContent = j.i.toFixed(2);
-  if (typeof j.fp === 'number') document.getElementById('fp').textContent = j.fp.toFixed(3);
-  if (typeof j.angle === 'number') document.getElementById('angle').textContent = j.angle.toFixed(1);
-  if (typeof j.thd === 'number') document.getElementById('thd').textContent = j.thd.toFixed(2);
-  if (typeof j.thd_i === 'number') document.getElementById('thd_i').textContent = j.thd_i.toFixed(2);
-  if (typeof j.f === 'number') document.getElementById('f').textContent = j.f.toFixed(2);
-  if (typeof j.h3 === 'number') document.getElementById('h3').textContent = j.h3.toFixed(2);
-  if (typeof j.h5 === 'number') document.getElementById('h5').textContent = j.h5.toFixed(2);
-  if (typeof j.h7 === 'number') document.getElementById('h7').textContent = j.h7.toFixed(2);
+  if (typeof j.v === 'number')   el('v').textContent     = j.v.toFixed(2);
+  if (typeof j.i === 'number')   el('i').textContent     = j.i.toFixed(2);
+  if (typeof j.fp === 'number')  el('fp').textContent    = j.fp.toFixed(3);
+  if (typeof j.angle === 'number') el('angle').textContent = j.angle.toFixed(1);
+  if (typeof j.thd === 'number') el('thd').textContent   = j.thd.toFixed(2);
+  if (typeof j.thd_i === 'number') el('thd_i').textContent = j.thd_i.toFixed(2);
+  if (typeof j.f === 'number')   el('f').textContent     = j.f.toFixed(2);
+  if (typeof j.h3 === 'number')  el('h3').textContent    = j.h3.toFixed(2);
+  if (typeof j.h5 === 'number')  el('h5').textContent    = j.h5.toFixed(2);
+  if (typeof j.h7 === 'number')  el('h7').textContent    = j.h7.toFixed(2);
   lastEl.textContent = new Date().toLocaleTimeString();
 }
 
-/* ------- BLE ------- */
-async function connectBLE() {
-  if (!navigator.bluetooth) {
-    alert('Web Bluetooth não disponível neste navegador.');
-    return;
-  }
-  try {
-    btnBle.disabled = true;
+/* ===================== BLE ===================== */
+async function connectBLE(){
+  if(!navigator.bluetooth){ alert('Web Bluetooth não disponível neste navegador.'); return; }
+  btnBle.disabled = true;
+  try{
+    setStatus('Procurando dispositivo BLE…');
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ name: 'MiniSlaveV1' }], // ou use services: [SERVICE_UUID]
-      optionalServices: [SERVICE_UUID]
+      filters:[{ name: 'MiniSlaveV1' }],
+      optionalServices:[SERVICE_UUID]
     });
     bleDevice = device;
     device.addEventListener('gattserverdisconnected', onBleDisconnect);
@@ -132,94 +144,145 @@ async function connectBLE() {
     const chr = await svc.getCharacteristic(DATA_CHAR_UUID);
     bleChar = chr;
 
-    // se suportar notificações
     if (chr.properties.notify) {
       await chr.startNotifications();
-      chr.addEventListener('characteristicvaluechanged', e => {
+      chr.addEventListener('characteristicvaluechanged', e=>{
         const value = new TextDecoder().decode(e.target.value);
-        try {
-          const j = JSON.parse(value);
-          updateValues(j);
-        } catch (err) { console.warn('BLE JSON parse failed', err, value); }
+        try { updateValues(JSON.parse(value)); }
+        catch(err){ console.warn('BLE JSON inválido', err, value); }
       });
+      btnDisconnect.disabled = true === false ? false : false; // mantém habilitado
       btnDisconnect.disabled = false;
       btnBle.textContent = 'Conectado (BLE)';
+      setStatus('Conectado via BLE.');
     } else {
-      // se característica for apenas leitura
       const v = await chr.readValue();
-      const s = new TextDecoder().decode(v);
-      try { updateValues(JSON.parse(s)); } catch {}
+      try { updateValues(JSON.parse(new TextDecoder().decode(v))); } catch{}
+      setStatus('Conectado (BLE, leitura única).');
     }
-  } catch (err) {
+  }catch(err){
     console.error(err);
-    alert('Erro BLE: ' + err);
-  } finally {
+    alert('Erro BLE: '+err);
+    setStatus('Falha no BLE.');
+  }finally{
     btnBle.disabled = false;
   }
 }
 
-function onBleDisconnect() {
+function onBleDisconnect(){
   btnBle.textContent = 'Conectar via BLE';
   btnDisconnect.disabled = true;
-  bleDevice = null;
-  bleChar = null;
+  setStatus('BLE desconectado.');
+  bleDevice = null; bleChar = null;
 }
 
-/* botão desconectar */
-btnDisconnect.addEventListener('click', () => {
+btnBle.addEventListener('click', connectBLE);
+btnDisconnect.addEventListener('click', ()=>{
   if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
   onBleDisconnect();
 });
 
-/* liga botão BLE */
-btnBle.addEventListener('click', connectBLE);
-
-/* ------- HTTP fallback (polling) ------- */
-async function connectHTTPOnce(ip) {
-  try {
-    const resp = await fetch((ip.startsWith('http')? ip: 'http://' + ip) + '/data', { cache: 'no-store' });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const j = await resp.json();
+/* ===================== HTTP (fallback) ===================== */
+async function connectHTTPOnce(ip){
+  try{
+    const base = ip.startsWith('http') ? ip : 'http://' + ip;
+    const r = await fetch(base + '/data', {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
     updateValues(j);
+    setStatus('Conectado via HTTP: '+base);
     return true;
-  } catch (err) {
-    console.warn('HTTP fetch failed', err);
+  }catch(err){
+    console.warn('HTTP falhou', err);
+    setStatus('HTTP falhou. Verifique IP ou use BLE.');
     return false;
   }
 }
 
-btnHttp.addEventListener('click', () => {
+btnHttp.addEventListener('click', ()=>{
   const ip = ipField.value.trim();
-  if (!ip) { alert('Digite o IP do ESP (ex: 192.168.4.1)'); return; }
+  if(!ip){ alert('Digite o IP (ex.: 192.168.4.1)'); return; }
   if (httpTimer) clearInterval(httpTimer);
-  // Poll a cada 1s
   connectHTTPOnce(ip);
-  httpTimer = setInterval(() => connectHTTPOnce(ip), 1000);
+  httpTimer = setInterval(()=>connectHTTPOnce(ip), 1000);
 });
 
-/* ------- Save to cloud (only on user click) ------- */
-btnSaveCloud.addEventListener('click', () => {
-  // construa a URL do servidor da empresa. Exemplo (ajuste conforme necessário):
-  // https://empresa.example.com/save?device=MiniSlave01&v=127.0&i=4.5&fp=0.95
-  // NÃO enviamos nada automaticamente — abrimos apenas a URL em nova aba.
-  const params = new URLSearchParams();
-  params.set('device', 'MiniSlaveV1'); // se souber id real, passe aqui
-  // inclui as últimas leituras visíveis na UI (opcional)
-  try {
-    params.set('v', document.getElementById('v').textContent);
-    params.set('i', document.getElementById('i').textContent);
-    params.set('fp', document.getElementById('fp').textContent);
-  } catch {}
-  const url = 'https://empresa.exemplo.com/save?' + params.toString(); // ALTERE para o servidor real
-  window.open(url, '_blank'); // abre nova aba
-});
+/* HTTPS bloqueia chamadas HTTP em background (mixed content) — redirecionar para http://IP funciona */
+if (location.protocol === 'https:') httpInfo.style.display = 'inline-block';
 
-/* Limpeza quando sair da página */
-window.addEventListener('beforeunload', () => {
-  if (httpTimer) clearInterval(httpTimer);
-  if (bleChar && bleChar.properties && bleChar.properties.notify) {
-    try { bleChar.stopNotifications(); } catch {}
+/* ===================== CLOUD LOOKUP (ID -> IP) ===================== */
+async function resolveIpFromCloud(id){
+  const url = `${CLOUD_BASE}/${encodeURIComponent(id)}.json`;
+  const r = await fetch(url, {cache:'no-store'});
+  if(!r.ok) throw new Error('Cloud HTTP '+r.status);
+  const j = await r.json();
+  if(!j || !j.ip) throw new Error('ID não encontrado na nuvem');
+  return j.ip;
+}
+
+btnFromCloud.addEventListener('click', async ()=>{
+  const id = idField.value.trim();
+  if(!id){ alert('Informe o ID do dispositivo'); return; }
+  setStatus('Buscando IP na nuvem…');
+  try{
+    const ip = await resolveIpFromCloud(id);
+    setStatus(`Redirecionando para http://${ip} …`);
+    // redirecionar (sai do HTTPS, então não tem mixed content)
+    location.href = `http://${ip}`;
+  }catch(err){
+    console.error(err);
+    setStatus('Falha ao buscar IP na nuvem.');
+    alert('Erro: '+err.message);
   }
+});
+
+/* ===================== SALVAR NA NUVEM (opcional, só por clique) ===================== */
+btnSaveCloud.addEventListener('click', ()=>{
+  const params = new URLSearchParams();
+  params.set('device','MiniSlaveV1');
+  try{
+    params.set('v',  el('v').textContent);
+    params.set('i',  el('i').textContent);
+    params.set('fp', el('fp').textContent);
+  }catch{}
+  const url = 'https://empresa.exemplo.com/save?'+params.toString(); // TROCAR para seu servidor
+  window.open(url, '_blank');
+});
+
+/* ===================== AUTO-MODE via querystring ===================== */
+/* Suporta:
+   ?ip=192.168.0.123        -> inicia HTTP polling
+   ?id=abc123               -> busca IP na nuvem e REDIRECIONA p/ http://IP
+   ?mode=ble                -> apenas mostra dica para clicar no BLE (auto-conectar não é permitido pelo browser)
+*/
+(function autoFromQuery(){
+  const q = new URLSearchParams(location.search);
+  const ip = q.get('ip');
+  const id = q.get('id');
+  const mode = q.get('mode');
+
+  if (id) {
+    idField.value = id;
+    // Busca IP e redireciona automaticamente
+    btnFromCloud.click();
+    return;
+  }
+
+  if (ip) {
+    ipField.value = ip;
+    btnHttp.click();
+    return;
+  }
+
+  if (mode === 'ble') {
+    setStatus('Clique em "Conectar via BLE" (requer gesto do usuário).');
+  }
+})();
+
+/* limpeza */
+window.addEventListener('beforeunload', ()=>{
+  if (httpTimer) clearInterval(httpTimer);
+  try { if (bleChar && bleChar.properties?.notify) bleChar.stopNotifications(); } catch {}
 });
 </script>
 </body>
