@@ -44,16 +44,16 @@ hr{border:0;border-top:1px solid #22314d;margin:10px 0}
     <hr>
 
     <div class="row">
-      <input id="ipField" placeholder="Fallback HTTP IP (ex.: 192.168.4.1)" style="flex:1;min-width:240px">
+      <input id="ipField" placeholder="IP do ESP (ex.: 192.168.4.1)" style="flex:1;min-width:240px">
       <button id="btnHttp">Conectar HTTP</button>
       <span class="badge" id="httpInfo">HTTPS bloqueia chamadas HTTP — use BLE no Pages</span>
     </div>
 
     <div class="row">
       <input id="idField" placeholder="ID do dispositivo (para buscar IP na nuvem)" style="flex:1;min-width:240px">
-      <button id="btnFromCloud">Ir via nuvem (pegar IP e redirecionar)</button>
+      <button id="btnFromCloud">Ir via nuvem</button>
     </div>
-    <div class="small" id="cloudNote">Defina sua URL de nuvem no código (CLOUD_BASE).</div>
+    <div class="small" id="cloudNote">Configure sua URL de nuvem no código (CLOUD_BASE).</div>
   </div>
 
   <h2 style="color:var(--accent);margin-top:12px">Medições (tempo real)</h2>
@@ -85,205 +85,73 @@ hr{border:0;border-top:1px solid #22314d;margin:10px 0}
 
 <script>
 /* ===================== CONFIG ===================== */
-/* UUIDs alinhados com o firmware atualizado */
-const SERVICE_UUID    = '12345678-1234-1234-1234-1234567890ab';
-const DATA_CHAR_UUID  = 'fedcba98-7654-4321-aaaa-bbbbbbbbbbbb'; // <- mesma do firmware
+const SERVICE_UUID   = '12345678-1234-1234-1234-1234567890ab';
+const DATA_CHAR_UUID = 'fedcba98-7654-4321-aaaa-bbbbbbbbbbbb';
+const CLOUD_BASE     = 'https://SEU_FIREBASE.firebaseio.com/devices';
 
-/* Backend para buscar IP por ID (ex.: Firebase REST) */
-const CLOUD_BASE = 'https://SEU_FIREBASE.firebaseio.com/devices'; // troque pelo seu endpoint
-
-/* ===================== UI/STATE ===================== */
-const el = (id)=>document.getElementById(id);
-const btnBle = el('btnBle');
-const btnDisconnect = el('btnDisconnect');
-const btnHttp = el('btnHttp');
-const btnFromCloud = el('btnFromCloud');
+const el = id => document.getElementById(id);
+const connStatus = el('connStatus');
 const ipField = el('ipField');
 const idField = el('idField');
+const btnHttp = el('btnHttp');
+const btnFromCloud = el('btnFromCloud');
+const btnBle = el('btnBle');
+const btnDisconnect = el('btnDisconnect');
 const lastEl = el('last');
-const connStatus = el('connStatus');
-const httpInfo = el('httpInfo');
 const btnSaveCloud = el('btnSaveCloud');
+const httpInfo = el('httpInfo');
 
-let bleDevice = null;
-let bleChar = null;
-let httpTimer = null;
+let httpTimer=null, bleDevice=null, bleChar=null;
 
 /* ===================== HELPERS ===================== */
-function setStatus(s){ connStatus.textContent = s; }
+function setStatus(s){ connStatus.textContent=s; }
 function updateValues(j){
-  if (!j) return;
-  if (typeof j.v === 'number')   el('v').textContent     = j.v.toFixed(2);
-  if (typeof j.i === 'number')   el('i').textContent     = j.i.toFixed(2);
-  if (typeof j.fp === 'number')  el('fp').textContent    = j.fp.toFixed(3);
-  if (typeof j.angle === 'number') el('angle').textContent = j.angle.toFixed(1);
-  if (typeof j.thd === 'number') el('thd').textContent   = j.thd.toFixed(2);
-  if (typeof j.thd_i === 'number') el('thd_i').textContent = j.thd_i.toFixed(2);
-  if (typeof j.f === 'number')   el('f').textContent     = j.f.toFixed(2);
-  if (typeof j.h3 === 'number')  el('h3').textContent    = j.h3.toFixed(2);
-  if (typeof j.h5 === 'number')  el('h5').textContent    = j.h5.toFixed(2);
-  if (typeof j.h7 === 'number')  el('h7').textContent    = j.h7.toFixed(2);
-  lastEl.textContent = new Date().toLocaleTimeString();
+  if(j.v!==undefined) el('v').textContent=j.v.toFixed(2);
+  if(j.i!==undefined) el('i').textContent=j.i.toFixed(2);
+  if(j.fp!==undefined) el('fp').textContent=j.fp.toFixed(3);
+  if(j.angle!==undefined) el('angle').textContent=j.angle.toFixed(1);
+  if(j.thd!==undefined) el('thd').textContent=j.thd.toFixed(2);
+  if(j.thd_i!==undefined) el('thd_i').textContent=j.thd_i.toFixed(2);
+  if(j.f!==undefined) el('f').textContent=j.f.toFixed(2);
+  if(j.h3!==undefined) el('h3').textContent=j.h3.toFixed(2);
+  if(j.h5!==undefined) el('h5').textContent=j.h5.toFixed(2);
+  if(j.h7!==undefined) el('h7').textContent=j.h7.toFixed(2);
+  lastEl.textContent=new Date().toLocaleTimeString();
 }
 
-/* ===================== BLE ===================== */
-async function connectBLE(){
-  if(!navigator.bluetooth){ alert('Web Bluetooth não disponível neste navegador.'); return; }
-  btnBle.disabled = true;
-  try{
-    setStatus('Procurando dispositivo BLE…');
-    const device = await navigator.bluetooth.requestDevice({
-      filters:[{ name: 'MiniSlaveV1' }],
-      optionalServices:[SERVICE_UUID]
-    });
-    bleDevice = device;
-    device.addEventListener('gattserverdisconnected', onBleDisconnect);
-
-    const server = await device.gatt.connect();
-    const svc = await server.getPrimaryService(SERVICE_UUID);
-    const chr = await svc.getCharacteristic(DATA_CHAR_UUID);
-    bleChar = chr;
-
-    if (chr.properties.notify) {
-      await chr.startNotifications();
-      chr.addEventListener('characteristicvaluechanged', e=>{
-        const value = new TextDecoder().decode(e.target.value);
-        try { updateValues(JSON.parse(value)); }
-        catch(err){ console.warn('BLE JSON inválido', err, value); }
-      });
-      btnDisconnect.disabled = true === false ? false : false; // mantém habilitado
-      btnDisconnect.disabled = false;
-      btnBle.textContent = 'Conectado (BLE)';
-      setStatus('Conectado via BLE.');
-    } else {
-      const v = await chr.readValue();
-      try { updateValues(JSON.parse(new TextDecoder().decode(v))); } catch{}
-      setStatus('Conectado (BLE, leitura única).');
-    }
-  }catch(err){
-    console.error(err);
-    alert('Erro BLE: '+err);
-    setStatus('Falha no BLE.');
-  }finally{
-    btnBle.disabled = false;
-  }
-}
-
-function onBleDisconnect(){
-  btnBle.textContent = 'Conectar via BLE';
-  btnDisconnect.disabled = true;
-  setStatus('BLE desconectado.');
-  bleDevice = null; bleChar = null;
-}
-
-btnBle.addEventListener('click', connectBLE);
-btnDisconnect.addEventListener('click', ()=>{
-  if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
-  onBleDisconnect();
-});
-
-/* ===================== HTTP (fallback) ===================== */
+/* ===================== HTTP ===================== */
 async function connectHTTPOnce(ip){
   try{
-    const base = ip.startsWith('http') ? ip : 'http://' + ip;
-    const r = await fetch(base + '/data', {cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const j = await r.json();
-    updateValues(j);
-    setStatus('Conectado via HTTP: '+base);
-    return true;
+    const r=await fetch(`http://${ip}/data`,{cache:'no-store'});
+    const j=await r.json(); updateValues(j);
+    setStatus('Conectado via HTTP: '+ip);
   }catch(err){
-    console.warn('HTTP falhou', err);
-    setStatus('HTTP falhou. Verifique IP ou use BLE.');
-    return false;
+    console.warn(err); setStatus('Falha HTTP.'); 
   }
 }
-
-btnHttp.addEventListener('click', ()=>{
-  const ip = ipField.value.trim();
-  if(!ip){ alert('Digite o IP (ex.: 192.168.4.1)'); return; }
-  if (httpTimer) clearInterval(httpTimer);
+btnHttp.addEventListener('click',()=>{
+  const ip=ipField.value.trim(); if(!ip) return;
+  if(httpTimer) clearInterval(httpTimer);
   connectHTTPOnce(ip);
-  httpTimer = setInterval(()=>connectHTTPOnce(ip), 1000);
+  httpTimer=setInterval(()=>connectHTTPOnce(ip),1000);
 });
 
-/* HTTPS bloqueia chamadas HTTP em background (mixed content) — redirecionar para http://IP funciona */
-if (location.protocol === 'https:') httpInfo.style.display = 'inline-block';
-
-/* ===================== CLOUD LOOKUP (ID -> IP) ===================== */
+/* ===================== CLOUD LOOKUP ===================== */
 async function resolveIpFromCloud(id){
-  const url = `${CLOUD_BASE}/${encodeURIComponent(id)}.json`;
-  const r = await fetch(url, {cache:'no-store'});
-  if(!r.ok) throw new Error('Cloud HTTP '+r.status);
-  const j = await r.json();
-  if(!j || !j.ip) throw new Error('ID não encontrado na nuvem');
-  return j.ip;
+  const r=await fetch(`${CLOUD_BASE}/${id}.json`); const j=await r.json();
+  if(!j||!j.ip) throw new Error('ID não encontrado'); return j.ip;
 }
-
-btnFromCloud.addEventListener('click', async ()=>{
-  const id = idField.value.trim();
-  if(!id){ alert('Informe o ID do dispositivo'); return; }
-  setStatus('Buscando IP na nuvem…');
-  try{
-    const ip = await resolveIpFromCloud(id);
-    setStatus(`Redirecionando para http://${ip} …`);
-    // redirecionar (sai do HTTPS, então não tem mixed content)
-    location.href = `http://${ip}`;
-  }catch(err){
-    console.error(err);
-    setStatus('Falha ao buscar IP na nuvem.');
-    alert('Erro: '+err.message);
-  }
+btnFromCloud.addEventListener('click',async()=>{
+  try{ const ip=await resolveIpFromCloud(idField.value.trim());
+    location.href=`http://${ip}`; }catch(err){alert(err);}
 });
 
-/* ===================== SALVAR NA NUVEM (opcional, só por clique) ===================== */
-btnSaveCloud.addEventListener('click', ()=>{
-  const params = new URLSearchParams();
-  params.set('device','MiniSlaveV1');
-  try{
-    params.set('v',  el('v').textContent);
-    params.set('i',  el('i').textContent);
-    params.set('fp', el('fp').textContent);
-  }catch{}
-  const url = 'https://empresa.exemplo.com/save?'+params.toString(); // TROCAR para seu servidor
-  window.open(url, '_blank');
-});
-
-/* ===================== AUTO-MODE via querystring ===================== */
-/* Suporta:
-   ?ip=192.168.0.123        -> inicia HTTP polling
-   ?id=abc123               -> busca IP na nuvem e REDIRECIONA p/ http://IP
-   ?mode=ble                -> apenas mostra dica para clicar no BLE (auto-conectar não é permitido pelo browser)
-*/
-(function autoFromQuery(){
-  const q = new URLSearchParams(location.search);
-  const ip = q.get('ip');
-  const id = q.get('id');
-  const mode = q.get('mode');
-
-  if (id) {
-    idField.value = id;
-    // Busca IP e redireciona automaticamente
-    btnFromCloud.click();
-    return;
-  }
-
-  if (ip) {
-    ipField.value = ip;
-    btnHttp.click();
-    return;
-  }
-
-  if (mode === 'ble') {
-    setStatus('Clique em "Conectar via BLE" (requer gesto do usuário).');
-  }
+/* ===================== AUTO ?ip / ?id ===================== */
+(function(){
+  const q=new URLSearchParams(location.search);
+  if(q.get('ip')){ ipField.value=q.get('ip'); btnHttp.click(); }
+  if(q.get('id')){ idField.value=q.get('id'); btnFromCloud.click(); }
 })();
-
-/* limpeza */
-window.addEventListener('beforeunload', ()=>{
-  if (httpTimer) clearInterval(httpTimer);
-  try { if (bleChar && bleChar.properties?.notify) bleChar.stopNotifications(); } catch {}
-});
 </script>
 </body>
 </html>
