@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BlackBox Mini - Dashboard</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--txt:#e5e7eb;--muted:#94a3b8;--accent:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--txt)}
+header{background:var(--card);padding:12px;text-align:center;font-size:20px;font-weight:700;color:var(--accent)}
+main{padding:16px;max-width:720px;margin:0 auto}
+h2{color:var(--accent);margin:16px 0;text-align:center}
+.grid{display:grid;gap:12px}
+.card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);display:flex;justify-content:space-between;align-items:center}
+.label{color:var(--muted)}.valor{color:var(--accent);font-weight:700}
+#last{color:var(--muted);margin-top:14px;text-align:center}
+input,button{padding:10px;margin:6px 0;border:none;border-radius:8px;font-size:15px}
+input{width:100%;background:#0b1220;color:var(--txt)}
+button{background:var(--accent);color:#002233;font-weight:700;cursor:pointer;width:100%}
+</style>
+<body>
+<header>📊 BlackBox Mini</header>
+<main>
+  <h2>Configuração</h2>
+  <input id="ip" placeholder="Digite o IP do ESP (ex: 192.168.4.1)">
+  <button onclick="conectar()">Conectar</button>
+
+  <h2>Qualidade de Energia</h2>
+  <div class="grid">
+    <div class="card"><span class="label">Tensão RMS</span><span class="valor" id="v">--</span> V</div>
+    <div class="card"><span class="label">Corrente RMS</span><span class="valor" id="i">--</span> A</div>
+    <div class="card"><span class="label">Fator de Potência</span><span class="valor" id="fp">--</span></div>
+    <div class="card"><span class="label">Ângulo φ</span><span class="valor" id="angle">--</span> °</div>
+    <div class="card"><span class="label">THD Tensão</span><span class="valor" id="thd">--</span> %</div>
+    <div class="card"><span class="label">THD Corrente</span><span class="valor" id="thd_i">--</span> %</div>
+    <div class="card"><span class="label">Frequência</span><span class="valor" id="f">--</span> Hz</div>
+    <div class="card"><span class="label">Harmônico 3ª</span><span class="valor" id="h3">--</span> %</div>
+    <div class="card"><span class="label">Harmônico 5ª</span><span class="valor" id="h5">--</span> %</div>
+    <div class="card"><span class="label">Harmônico 7ª</span><span class="valor" id="h7">--</span> %</div>
+  </div>
+  <div id="last">Última atualização: --</div>
+</main>
+
+<script>
+let ip="",timer;
+function conectar(){
+  ip=document.getElementById("ip").value.trim();
+  if(!ip){alert("Digite o IP do ESP32");return;}
+  if(timer) clearInterval(timer);
+  atualizar(); timer=setInterval(atualizar,1000);
+}
+async function atualizar(){
+  try{
+    const r=await fetch(`http://${ip}/data`);
+    const j=await r.json();
+    document.getElementById("v").textContent=j.v.toFixed(2);
+    document.getElementById("i").textContent=j.i.toFixed(2);
+    document.getElementById("fp").textContent=j.fp.toFixed(3);
+    document.getElementById("angle").textContent=j.angle.toFixed(1);
+    document.getElementById("thd").textContent=j.thd.toFixed(2);
+    document.getElementById("thd_i").textContent=j.thd_i.toFixed(2);
+    document.getElementById("f").textContent=j.f.toFixed(2);
+    document.getElementById("h3").textContent=j.h3.toFixed(2);
+    document.getElementById("h5").textContent=j.h5.toFixed(2);
+    document.getElementById("h7").textContent=j.h7.toFixed(2);
+    document.getElementById("last").textContent="Última atualização: "+new Date().toLocaleTimeString();
+  }catch(e){
+    document.getElementById("last").textContent="Falha ao conectar: "+e;
+  }
+}
+</script>
+</body>
+</html>
